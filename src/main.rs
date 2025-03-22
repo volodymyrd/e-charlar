@@ -3,20 +3,26 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 
-async fn handle_client(stream: TcpStream, tx: broadcast::Sender<String>) {
+async fn handle_client(stream: TcpStream, tx: broadcast::Sender<(i64, String)>) {
     let (mut reader, mut writer) = stream.into_split();
 
-    let mut buffer = [0u8; 1024];
+    let client_id = rand::random::<i64>();
 
     let mut rx = tx.subscribe();
 
     tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
+        while let Ok((id, msg)) = rx.recv().await {
+            if id == client_id {
+                continue;
+            }
+
             if (writer.write_all(msg.as_bytes()).await).is_err() {
                 break;
             }
         }
     });
+
+    let mut buffer = [0u8; 1024];
 
     loop {
         let bytes_read = match reader.read(&mut buffer).await {
@@ -27,7 +33,7 @@ async fn handle_client(stream: TcpStream, tx: broadcast::Sender<String>) {
 
         let message = String::from_utf8_lossy(&buffer[..bytes_read]);
         println!("Received: {}", message);
-        if tx.send(message.into_owned()).is_err() {
+        if tx.send((client_id, message.into_owned())).is_err() {
             break;
         }
     }
