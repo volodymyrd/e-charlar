@@ -1,63 +1,70 @@
+use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::io::Error;
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, broadcast};
+use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 
 async fn handle_client(stream: TcpStream, tx: broadcast::Sender<(i64, String)>, users: UserMap) {
-    let (mut reader, mut writer) = stream.into_split();
+    let (reader, writer) = stream.into_split();
 
     let client_id = rand::random::<i64>();
 
-    let mut buffer = [0u8; 1024];
+    let mut stream = FramedRead::new(reader, LinesCodec::new());
+    let mut sink = FramedWrite::new(writer, LinesCodec::new());
 
     // Request username
-    writer.write_all(b"Enter your username: ").await.unwrap();
-    let bytes_read = reader.read(&mut buffer).await.unwrap();
-    let username = String::from_utf8_lossy(&buffer[..bytes_read])
-        .trim()
-        .to_string();
-    users.lock().await.insert(client_id, username.clone());
-    println!("{} has joined the chat.", username);
+    if (sink.send("Enter your username: ").await).is_err() {
+        return;
+    }
+    if let Some(Ok(username)) = stream.next().await {
+        users.lock().await.insert(client_id, username.clone());
+        println!("{} has joined the chat.", username);
+        if (sink.send(format!("Hello {username}! ❤️")).await).is_err() {
+            return;
+        }
+    }
 
     let mut rx = tx.subscribe();
 
     let users_clone = Arc::clone(&users);
-    tokio::spawn(async move {
-        while let Ok((id, msg)) = rx.recv().await {
-            if id == client_id {
-                continue;
-            }
-
-            let sender_name = users_clone
-                .lock()
-                .await
-                .get(&id)
-                .unwrap_or(&"Unknown".to_string())
-                .clone();
-            let formatted_msg = format!("{}: {}", sender_name, msg);
-            if (writer.write_all(formatted_msg.as_bytes()).await).is_err() {
-                break;
-            }
-        }
-    });
 
     loop {
-        let bytes_read = match reader.read(&mut buffer).await {
-            Ok(0) => break,
-            Ok(n) => n,
-            Err(_) => break,
-        };
-
-        let message = String::from_utf8_lossy(&buffer[..bytes_read]);
-        println!("Received: {}", message.trim());
-        if tx.send((client_id, message.into_owned())).is_err() {
-            break;
+        tokio::select! {
+            user_message = stream.next() => {
+                match user_message {
+                    None => break,
+                    Some(user_message) => {
+                        if user_message.is_err() {
+                            break;
+                        }
+                        let user_message  = user_message.unwrap();
+                        println!("Received: {}", user_message.trim());
+                        if tx.send((client_id, user_message)).is_err() {
+                            break;
+                        }
+                    },
+                };
+            },
+            recv = rx.recv() => {
+                if recv.is_err() {
+                    break;
+                }
+                let (id, peer_message) = recv.unwrap();
+                if client_id != id {
+                    let sender_name = users_clone.lock().await.get(&id)
+                    .unwrap_or(&"Unknown".to_string()).clone();
+                    let formatted_msg = format!("{}: {}", sender_name, peer_message);
+                    if (sink.send(formatted_msg).await).is_err() {
+                        break;
+                    }
+                }
+            }
         }
     }
 
-    users.lock().await.remove(&client_id);
+    let username = users.lock().await.remove(&client_id).unwrap();
     println!("{} has left the chat.", username);
 }
 
@@ -78,7 +85,7 @@ async fn main() -> Result<(), Box<Error>> {
             Ok((stream, _)) => {
                 let tx = tx.clone();
                 let users = Arc::clone(&users);
-                tokio::spawn(async move { handle_client(stream, tx, users).await });
+                tokio::spawn(handle_client(stream, tx, users));
             }
             Err(e) => eprintln!("Connection failed: {}", e),
         }
