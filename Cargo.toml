@@ -7,7 +7,7 @@ license = "Apache-2.0"
 edition = "2021"
 
 [workspace]
-members = ["console-client", "server", "experimental", "shared"]
+members = ["console-client", "echarlar/src-tauri", "server", "experimental", "shared"]
 
 resolver = "2"
 
