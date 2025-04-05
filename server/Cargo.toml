@@ -1,0 +1,27 @@
+[package]
+name = "server"
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+shared = { workspace = true }
+
+anyhow = { workspace = true }
+bincode = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+uuid = { version = "1.16.0", features = ["v4"] }
+
+
+[dependencies.rocksdb]
+version = "0.23.0"
+default-features = false
+features = ["lz4"]
+
+
+[dev-dependencies]
+tempfile = { workspace = true }

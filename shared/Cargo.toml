@@ -1,0 +1,12 @@
+[package]
+name = "shared"
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+uuid = { workspace = true }
+serde = { version = "1.0.219", features = ["derive"] }
