@@ -12,8 +12,8 @@ members = [
     "echarlar/src-tauri",
     "server",
     "experimental",
-    "experimental/chat-v2/client",
     "experimental/chat-v2/server",
+    "experimental/chat-v3/server",
     "shared"
 ]
 
