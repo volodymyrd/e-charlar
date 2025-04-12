@@ -33,17 +33,18 @@ async fn handle_client(
     addr: SocketAddr,
     rooms: ChatRooms,
 ) -> anyhow::Result<()> {
-    let (reader, mut writer) = stream.into_split();
+    let (reader, writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
+    let mut writer = writer;
+
     let mut buffer = String::new();
 
-    // Ask for a room name
+    // Ask for room name
     writer.write_all(b"Enter room name: ").await?;
     reader.read_line(&mut buffer).await?;
     let room = buffer.trim().to_string();
     buffer.clear();
 
-    // Get or create the broadcast channel for the room
     let tx = rooms
         .entry(room.clone())
         .or_insert_with(|| broadcast::channel(100).0)
@@ -51,28 +52,47 @@ async fn handle_client(
 
     let mut rx = tx.subscribe();
 
-    // Welcome message
     writer
-        .write_all(format!("Joined room '{}'. You can start chatting!\n", room).as_bytes())
+        .write_all(format!("Joined room '{}'. Start chatting!\n", room).as_bytes())
         .await?;
 
-    // Spawn a task to forward incoming messages to this client
-    let writer_task = tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
-            if let Err(e) = writer.write_all(format!("{}\n", msg).as_bytes()).await {
-                eprintln!("Error writing to client {}: {:?}", addr, e);
-                break;
+    loop {
+        tokio::select! {
+            // Handle input from the client
+            result = reader.read_line(&mut buffer) => {
+                match result {
+                    Ok(0) => break, // client disconnected
+                    Ok(_) => {
+                        let msg = format!("[{}] {}", addr, buffer.trim());
+                        let _ = tx.send(msg);
+                        buffer.clear();
+                    },
+                    Err(e) => {
+                        eprintln!("Read error from {}: {:?}", addr, e);
+                        break;
+                    }
+                }
+            }
+
+            // Handle messages from the chat room
+            result = rx.recv() => {
+                match result {
+                    Ok(msg) => {
+                        if let Err(e) = writer.write_all(format!("{}\n", msg).as_bytes()).await {
+                            eprintln!("Write error to {}: {:?}", addr, e);
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        let _ = writer.write_all(format!("⚠️ Skipped {} messages\n", skipped).as_bytes()).await;
+                    }
+                    Err(_) => break, // Sender dropped
+                }
             }
         }
-    });
-
-    // Read messages from the client and broadcast them
-    while reader.read_line(&mut buffer).await? != 0 {
-        let msg = format!("[{}] {}", addr, buffer.trim());
-        let _ = tx.send(msg);
-        buffer.clear();
     }
 
-    println!("Client {} disconnected", addr);
+    println!("Client {} disconnected from room '{}'", addr, room);
     Ok(())
 }
+
