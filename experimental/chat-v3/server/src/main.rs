@@ -1,10 +1,14 @@
+use dashmap::DashMap;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
     sync::mpsc,
 };
-use dashmap::DashMap;
-use std::{collections::{HashMap, HashSet}, sync::Arc, sync::atomic::{AtomicUsize, Ordering}};
 
 type ClientId = usize;
 type Clients = Arc<DashMap<ClientId, Client>>;
@@ -46,9 +50,16 @@ async fn handle_client(stream: TcpStream, clients: Clients, rooms: Rooms) {
     let mut buffer = String::new();
 
     // Ask for room list
-    writer.write_all(b"Enter rooms (comma-separated): ").await.ok();
+    writer
+        .write_all(b"Enter rooms (comma-separated): ")
+        .await
+        .ok();
     reader.read_line(&mut buffer).await.ok();
-    let room_list = buffer.trim().split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>();
+    let room_list = buffer
+        .trim()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .collect::<Vec<_>>();
     buffer.clear();
 
     // Register client and subscriptions
@@ -58,9 +69,19 @@ async fn handle_client(stream: TcpStream, clients: Clients, rooms: Rooms) {
         client_rooms.insert(room.clone());
     }
 
-    clients.insert(id, Client { id, sender: tx.clone(), rooms: client_rooms });
+    clients.insert(
+        id,
+        Client {
+            id,
+            sender: tx.clone(),
+            rooms: client_rooms,
+        },
+    );
 
-    writer.write_all(b"Welcome! Use /send room_name message\n").await.ok();
+    writer
+        .write_all(b"Welcome! Use /send room_name message\n")
+        .await
+        .ok();
 
     loop {
         tokio::select! {

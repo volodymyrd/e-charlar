@@ -95,4 +95,3 @@ async fn handle_client(
     println!("Client {} disconnected from room '{}'", addr, room);
     Ok(())
 }
-
